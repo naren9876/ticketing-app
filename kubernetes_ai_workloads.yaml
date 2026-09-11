@@ -1,0 +1,539 @@
+# Kubernetes Configuration for AI/ML Workloads
+# Module 15: Kubernetes for AI Workloads
+# Covers: GPU orchestration, model serving, distributed training, KServe
+
+---
+# ==================== GPU Node Pool (for training/inference) ====================
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: nvidia
+handler: nvidia
+
+---
+# ==================== Model Serving with KServe ====================
+# KServe InferenceService for ML Model Serving
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: recommendation-model
+  namespace: ai-models
+  annotations:
+    serving.kserve.io/deploymentMode: "Serverless"
+spec:
+  predictor:
+    serviceAccountName: model-server
+    containers:
+    - name: kserve-container
+      image: ticketing/recommendation-model:v1.0.0
+      ports:
+      - containerPort: 8080
+      env:
+      - name: MODEL_PATH
+        value: /mnt/models/recommendation/model.pkl
+      - name: BATCH_SIZE
+        value: "32"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1"
+          nvidia.com/gpu: "1"  # Request GPU
+        limits:
+          memory: "4Gi"
+          cpu: "2"
+          nvidia.com/gpu: "1"
+      livenessProbe:
+        httpGet:
+          path: /v1/models/recommendation:predict
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+      readinessProbe:
+        httpGet:
+          path: /v1/models/recommendation:predict
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 5
+    volumes:
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: models-pvc
+
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: fraud-detection-model
+  namespace: ai-models
+spec:
+  predictor:
+    serviceAccountName: model-server
+    containers:
+    - name: kserve-container
+      image: ticketing/fraud-model:v1.0.0
+      ports:
+      - containerPort: 8080
+      env:
+      - name: MODEL_PATH
+        value: /mnt/models/fraud/model.pkl
+      - name: BATCH_SIZE
+        value: "64"
+      resources:
+        requests:
+          memory: "3Gi"
+          cpu: "2"
+          nvidia.com/gpu: "1"
+        limits:
+          memory: "6Gi"
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      livenessProbe:
+        httpGet:
+          path: /v1/models/fraud:predict
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+    volumes:
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: models-pvc
+
+---
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: demand-forecast-model
+  namespace: ai-models
+spec:
+  predictor:
+    serviceAccountName: model-server
+    containers:
+    - name: kserve-container
+      image: ticketing/demand-model:v1.0.0
+      ports:
+      - containerPort: 8080
+      env:
+      - name: MODEL_PATH
+        value: /mnt/models/demand/model.h5
+      - name: BATCH_SIZE
+        value: "32"
+      resources:
+        requests:
+          memory: "4Gi"
+          cpu: "2"
+          nvidia.com/gpu: "1"
+        limits:
+          memory: "8Gi"
+          cpu: "4"
+          nvidia.com/gpu: "1"
+      livenessProbe:
+        httpGet:
+          path: /v1/models/demand:predict
+          port: 8080
+        initialDelaySeconds: 30
+        periodSeconds: 10
+    volumes:
+    - name: model-storage
+      persistentVolumeClaim:
+        claimName: models-pvc
+
+---
+# ==================== Distributed Model Training Job ====================
+# PyTorch Distributed Training Job with GPU
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: recommendation-model-training
+  namespace: ai-training
+spec:
+  parallelism: 4  # Run 4 replicas in parallel
+  completions: 4
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: recommendation-training
+    spec:
+      serviceAccountName: training-sa
+      restartPolicy: Never
+      containers:
+      - name: training-container
+        image: ticketing/training-job:v1.0.0
+        command:
+        - python
+        - /app/train_distributed.py
+        env:
+        - name: RANK
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['pod-index']
+        - name: WORLD_SIZE
+          value: "4"
+        - name: MASTER_ADDR
+          value: "recommendation-training-0"
+        - name: MASTER_PORT
+          value: "29500"
+        - name: DATA_PATH
+          value: /data/training_data
+        - name: OUTPUT_PATH
+          value: /models/output
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4"
+            nvidia.com/gpu: "1"  # 1 GPU per worker
+          limits:
+            memory: "16Gi"
+            cpu: "8"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: training-data
+          mountPath: /data
+        - name: model-output
+          mountPath: /models
+      volumes:
+      - name: training-data
+        persistentVolumeClaim:
+          claimName: training-data-pvc
+      - name: model-output
+        persistentVolumeClaim:
+          claimName: models-pvc
+      nodeSelector:
+        gpu: "true"  # Schedule on GPU nodes
+
+---
+# ==================== Model Registry & Version Control ====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-registry
+  namespace: ai-models
+data:
+  models.json: |
+    {
+      "recommendation-model": {
+        "latest_version": "1.5.0",
+        "production_version": "1.4.2",
+        "staging_version": "1.5.0",
+        "registry_path": "gcr.io/ticketing/recommendation-model",
+        "framework": "scikit-learn",
+        "input_size": 50,
+        "output_size": 5
+      },
+      "fraud-detection-model": {
+        "latest_version": "2.1.0",
+        "production_version": "2.0.5",
+        "staging_version": "2.1.0",
+        "registry_path": "gcr.io/ticketing/fraud-model",
+        "framework": "xgboost",
+        "input_size": 15,
+        "output_size": 1
+      },
+      "demand-forecast-model": {
+        "latest_version": "1.2.0",
+        "production_version": "1.1.3",
+        "staging_version": "1.2.0",
+        "registry_path": "gcr.io/ticketing/demand-model",
+        "framework": "tensorflow",
+        "input_size": 30,
+        "output_size": 7
+      }
+    }
+
+---
+# ==================== Model Registry Service ====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-registry-service
+  namespace: ai-models
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: model-registry
+  template:
+    metadata:
+      labels:
+        app: model-registry
+    spec:
+      serviceAccountName: model-registry-sa
+      containers:
+      - name: registry
+        image: ticketing/model-registry:v1.0.0
+        ports:
+        - containerPort: 5000
+        env:
+        - name: REGISTRY_PATH
+          value: /mnt/registry
+        - name: MAX_MODELS
+          value: "100"
+        - name: MAX_VERSIONS
+          value: "10"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        volumeMounts:
+        - name: registry-storage
+          mountPath: /mnt/registry
+      volumes:
+      - name: registry-storage
+        persistentVolumeClaim:
+          claimName: registry-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-registry-service
+  namespace: ai-models
+spec:
+  selector:
+    app: model-registry
+  ports:
+  - protocol: TCP
+    port: 5000
+    targetPort: 5000
+  type: ClusterIP
+
+---
+# ==================== GPU Resource Quota ====================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota
+  namespace: ai-models
+spec:
+  hard:
+    nvidia.com/gpu: "8"  # Maximum 8 GPUs in namespace
+    requests.memory: "64Gi"
+    requests.cpu: "32"
+    limits.memory: "128Gi"
+    limits.cpu: "64"
+
+---
+# ==================== Persistent Volumes for ML ====================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models-pvc
+  namespace: ai-models
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-data-pvc
+  namespace: ai-training
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pvc
+  namespace: ai-models
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard-ssd
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# ==================== Service Accounts ====================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: model-server
+  namespace: ai-models
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: training-sa
+  namespace: ai-training
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: model-registry-sa
+  namespace: ai-models
+
+---
+# ==================== RBAC for Model Operations ====================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: model-operator
+  namespace: ai-models
+rules:
+- apiGroups: ["serving.kserve.io"]
+  resources: ["inferenceservices"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: model-operator-binding
+  namespace: ai-models
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: model-operator
+subjects:
+- kind: ServiceAccount
+  name: model-server
+  namespace: ai-models
+
+---
+# ==================== GPU Node Affinity ====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-monitor
+  namespace: ai-models
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gpu-monitor
+  template:
+    metadata:
+      labels:
+        app: gpu-monitor
+    spec:
+      containers:
+      - name: monitor
+        image: ticketing/gpu-monitor:v1.0.0
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      nodeSelector:
+        gpu: "true"
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - gpu-monitor
+              topologyKey: kubernetes.io/hostname
+
+---
+# ==================== Auto Scaling for Inference ====================
+apiVersion: autoscaling.k8s.io/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inference-autoscaler
+  namespace: ai-models
+spec:
+  scaleTargetRef:
+    apiVersion: serving.kserve.io/v1beta1
+    kind: InferenceService
+    name: recommendation-model
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  - type: Pods
+    pods:
+      metric:
+        name: inference_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Max
+
+---
+# ==================== Namespace ====================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-models
+  labels:
+    purpose: model-serving
+    monitoring: enabled
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-training
+  labels:
+    purpose: model-training
+    monitoring: enabled

@@ -1,0 +1,240 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: ticketing_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ticketing_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticketing-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ticketing_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticketing-network
+
+  # RabbitMQ Message Broker
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: ticketing_rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ticketing-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: api-gateway
+    container_name: ticketing_gateway
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      USER_SERVICE_URL: http://user-service:3001
+      MOVIE_SERVICE_URL: http://movie-service:3002
+      BOOKING_SERVICE_URL: http://booking-service:3003
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      NOTIFICATION_SERVICE_URL: http://notification-service:3005
+      JWT_SECRET: your-secret-key
+    depends_on:
+      - user-service
+      - movie-service
+      - booking-service
+      - payment-service
+      - notification-service
+    networks:
+      - ticketing-network
+
+  # User Service
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: user-service
+    container_name: ticketing_user_service
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ticketing_db
+      JWT_SECRET: your-secret-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  # Movie Service
+  movie-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: movie-service
+    container_name: ticketing_movie_service
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ticketing_db
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  # Booking Service
+  booking-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: booking-service
+    container_name: ticketing_booking_service
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ticketing_db
+      PAYMENT_SERVICE_URL: http://payment-service:3004
+      NOTIFICATION_SERVICE_URL: http://notification-service:3005
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  # Payment Service
+  payment-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: payment-service
+    container_name: ticketing_payment_service
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ticketing_db
+      BOOKING_SERVICE_URL: http://booking-service:3003
+      STRIPE_SECRET_KEY: sk_test_dummy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  # Notification Service
+  notification-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: notification-service
+    container_name: ticketing_notification_service
+    ports:
+      - "3005:3005"
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+      DB_USER: postgres
+      DB_PASSWORD: password
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ticketing_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ticketing-network
+
+  # Frontend (React)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ticketing_frontend
+    ports:
+      - "3100:80"
+    environment:
+      REACT_APP_API_URL: http://localhost:3000
+    depends_on:
+      - api-gateway
+    networks:
+      - ticketing-network
+
+volumes:
+  postgres_data:
+
+networks:
+  ticketing-network:
+    driver: bridge
