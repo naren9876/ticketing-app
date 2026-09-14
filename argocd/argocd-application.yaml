@@ -1,0 +1,162 @@
+# ArgoCD Application - GitOps Deployment
+
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ticketing-app
+  namespace: argocd
+spec:
+  project: default
+  
+  # SOURCE: Git repository is source of truth
+  source:
+    repoURL: https://github.com/your-org/ticketing-app
+    targetRevision: enterprise-ci-cd-sprint
+    path: kubernetes/
+    
+    # Auto-sync configuration
+    syncPolicy:
+      automated:
+        prune: true
+        selfHeal: true
+  
+  # DESTINATION: Where to deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ticketing
+  
+  # SYNC POLICY: Keep deployed state matching Git
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+    
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  
+  # NOTIFICATIONS
+  notifications:
+    - type: slack
+      channel: "#deployments"
+  
+  # REVISION HISTORY
+  revisionHistoryLimit: 10
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ticketing
+  labels:
+    name: ticketing
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ticketing-api
+  namespace: ticketing
+spec:
+  replicas: 3
+  
+  selector:
+    matchLabels:
+      app: ticketing-api
+  
+  template:
+    metadata:
+      labels:
+        app: ticketing-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    
+    spec:
+      containers:
+      - name: api
+        image: ticketing-app:v2.0
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - containerPort: 8080
+          name: http
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        
+        securityContext:
+          runAsNonRoot: true
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+        
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ticketing-api
+  namespace: ticketing
+spec:
+  type: LoadBalancer
+  selector:
+    app: ticketing-api
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ticketing-api-hpa
+  namespace: ticketing
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ticketing-api
+  
+  minReplicas: 3
+  maxReplicas: 10
+  
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
