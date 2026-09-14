@@ -1,0 +1,152 @@
+# Kubernetes Pod Security Policies
+# Enforced at cluster level
+
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: ticketing-restricted
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+spec:
+  # ENFORCED: Privileged containers not allowed
+  privileged: false
+  allowPrivilegeEscalation: false
+  
+  # ENFORCED: Read-only root filesystem
+  readOnlyRootFilesystem: true
+  
+  # ENFORCED: Run as non-root
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  
+  # ENFORCED: Capabilities restrictions
+  requiredDropCapabilities:
+    - ALL
+  allowedCapabilities: []
+  
+  # ENFORCED: No host access
+  hostNetwork: false
+  hostPID: false
+  hostIPC: false
+  
+  # ENFORCED: Volumes restrictions
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ticketing-network-policy
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: ticketing-app
+  
+  # ENFORCED: Deny all ingress by default
+  policyTypes:
+    - Ingress
+    - Egress
+  
+  # ENFORCED: Allow ingress only from allowed sources
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    
+    - from:
+        - podSelector:
+            matchLabels:
+              role: load-balancer
+      ports:
+        - protocol: TCP
+          port: 443
+  
+  # ENFORCED: Allow egress only to required services
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+    
+    # Database
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    
+    # External APIs
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 443
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ticketing-quota
+  namespace: default
+spec:
+  # ENFORCED: CPU and memory limits
+  hard:
+    requests.cpu: "100"
+    requests.memory: "200Gi"
+    limits.cpu: "200"
+    limits.memory: "400Gi"
+    pods: "100"
+  
+  # ENFORCED: Track usage
+  scopeSelector:
+    matchExpressions:
+      - operator: In
+        scopeName: PriorityClass
+        values: ["high", "medium", "low"]
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: ticketing-limits
+  namespace: default
+spec:
+  limits:
+    # ENFORCED: Container CPU limits
+    - max:
+        cpu: "2"
+        memory: "2Gi"
+      min:
+        cpu: "100m"
+        memory: "128Mi"
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      type: Container
+    
+    # ENFORCED: Pod CPU limits
+    - max:
+        cpu: "4"
+        memory: "4Gi"
+      min:
+        cpu: "200m"
+        memory: "256Mi"
+      type: Pod
