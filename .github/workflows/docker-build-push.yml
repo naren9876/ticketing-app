@@ -1,0 +1,41 @@
+name: Build and Push Docker Images to ECR
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+    
+    - name: Build and push Docker images
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: latest
+      run: |
+        services=("api-gateway" "user-service" "movie-service" "booking-service" "payment-service" "notification-service")
+        
+        for service in "${services[@]}"; do
+          echo "Building ticketing-$service..."
+          docker build -t $ECR_REGISTRY/ticketing-$service:$IMAGE_TAG -f Dockerfile .
+          
+          echo "Pushing ticketing-$service to ECR..."
+          docker push $ECR_REGISTRY/ticketing-$service:$IMAGE_TAG
+          echo "✅ ticketing-$service pushed!"
+        done
