@@ -1,0 +1,14 @@
+{
+  "ticket_number": "CHG20260913160758",
+  "title": "v1.0 \u2192 v2.0 Zero-Downtime Migration",
+  "description": "Database migration with blue-green deployment",
+  "status": "new",
+  "created_at": "2026-09-13T20:07:58.753318",
+  "approvers": [
+    "Engineer1",
+    "Engineer2",
+    "Engineer3"
+  ],
+  "approvals": 0,
+  "approval_status": "pending"
+}

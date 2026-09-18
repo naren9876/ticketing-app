@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-09-14T15:16:51.786810",
+  "tests": [
+    {
+      "type": "unit",
+      "status": "passed",
+      "coverage": 85,
+      "tests": 142,
+      "passed": 142,
+      "failed": 0
+    },
+    {
+      "type": "integration",
+      "status": "passed",
+      "critical_paths": 15,
+      "passed": 15,
+      "failed": 0
+    },
+    {
+      "type": "smoke",
+      "status": "passed",
+      "flows": 5,
+      "passed": 5,
+      "failed": 0
+    },
+    {
+      "type": "performance",
+      "status": "passed",
+      "metrics": {
+        "p50": 250,
+        "p95": 1850,
+        "p99": 1950
+      }
+    },
+    {
+      "type": "load",
+      "status": "passed",
+      "requests": 100000,
+      "successful": 99900,
+      "failed": 100,
+      "success_rate": 99.9
+    }
+  ],
+  "summary": {
+    "total_test_types": 5,
+    "passed": 5,
+    "failed": 0,
+    "overall_status": "PASSED"
+  }
+}
