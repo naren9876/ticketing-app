@@ -119,3 +119,10 @@ tfplan
 terraform/.terraform/
 .terraform.lock.hcl
 tfplan
+
+# Infrastructure is in separate repository
+terraform/
+kubernetes/
+k8s/
+*.tfplan
+.terraform/
