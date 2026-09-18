@@ -108,3 +108,14 @@ secrets.yaml
 private.key
 *.pem
 .env*
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+tfplan
+*.tfvars.json
+terraform/.terraform/
+.terraform.lock.hcl
+tfplan
