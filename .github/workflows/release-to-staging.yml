@@ -18,17 +18,34 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
     
+    - name: Login to ECR
+      run: aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+    
     - name: Build and push Docker images
       run: |
-        # Build and push images (existing logic)
-        echo "Building images for release ${{ github.event.release.tag_name }}"
+        VERSION=${{ github.event.release.tag_name }}
+        REGISTRY=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+        
+        docker build -t $REGISTRY/ticketing-api-gateway:$VERSION ./services/api-gateway
+        docker build -t $REGISTRY/ticketing-user-service:$VERSION ./services/user-service
+        docker build -t $REGISTRY/ticketing-movie-service:$VERSION ./services/movie-service
+        docker build -t $REGISTRY/ticketing-booking-service:$VERSION ./services/booking-service
+        docker build -t $REGISTRY/ticketing-payment-service:$VERSION ./services/payment-service
+        docker build -t $REGISTRY/ticketing-notification-service:$VERSION ./services/notification-service
+        
+        docker push $REGISTRY/ticketing-api-gateway:$VERSION
+        docker push $REGISTRY/ticketing-user-service:$VERSION
+        docker push $REGISTRY/ticketing-movie-service:$VERSION
+        docker push $REGISTRY/ticketing-booking-service:$VERSION
+        docker push $REGISTRY/ticketing-payment-service:$VERSION
+        docker push $REGISTRY/ticketing-notification-service:$VERSION
     
     - name: Trigger infrastructure deployment
       uses: actions/github-script@v6
       with:
-        github-token: ${{ secrets.GH_TOKEN_DEPLOYMENT }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
-          github.rest.repos.createDispatchEvent({
+          await github.rest.repos.createDispatchEvent({
             owner: 'naren9876',
             repo: 'ticketing-infrastructure',
             event_type: 'deploy-staging',
