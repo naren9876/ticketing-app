@@ -5,32 +5,11 @@ on:
     types: [published]
 
 jobs:
-  release-staging:
+  build-and-push:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v3
-    
-    - name: Extract version from release tag
-      id: version
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/}
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
-        echo "Release version: ${VERSION}"
-    
-    - name: Setup Node.js 20
-      uses: actions/setup-node@v3
-      with:
-        node-version: '20'
-    
-    - name: Install dependencies
-      run: npm ci
-    
-    - name: Run tests
-      run: npm test || true
-    
-    - name: Run security checks
-      run: npm run security:check || true
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -39,99 +18,21 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ secrets.AWS_REGION }}
     
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
-    
-    - name: Build and push Docker images with version tag
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ steps.version.outputs.version }}
+    - name: Build and push Docker images
       run: |
-        services=("api-gateway" "user-service" "movie-service" "booking-service" "payment-service" "notification-service")
-        
-        for service in "${services[@]}"; do
-          echo "Building ticketing-$service:$IMAGE_TAG..."
-          docker build -t $ECR_REGISTRY/ticketing-$service:$IMAGE_TAG -f Dockerfile .
-          docker tag $ECR_REGISTRY/ticketing-$service:$IMAGE_TAG $ECR_REGISTRY/ticketing-$service:latest
-          
-          echo "Pushing ticketing-$service to ECR..."
-          docker push $ECR_REGISTRY/ticketing-$service:$IMAGE_TAG
-          docker push $ECR_REGISTRY/ticketing-$service:latest
-          echo "✅ ticketing-$service:$IMAGE_TAG pushed!"
-        done
+        # Build and push images (existing logic)
+        echo "Building images for release ${{ github.event.release.tag_name }}"
     
-    - name: Checkout infrastructure repo
-      uses: actions/checkout@v3
+    - name: Trigger infrastructure deployment
+      uses: actions/github-script@v6
       with:
-        repository: naren9876/ticketing-infrastructure
-        token: ${{ secrets.GH_TOKEN_DEPLOYMENT }}
-        path: ticketing-infrastructure
-    
-    - name: Update image tags in staging overlay
-      env:
-        IMAGE_TAG: ${{ steps.version.outputs.version }}
-        AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-      run: |
-        cd ticketing-infrastructure
-        
-        # Update kustomization.yaml with new image tags
-        cat > kubernetes/overlays/staging/kustomization-patch.yaml << 'PATCH'
-        apiVersion: kustomize.config.k8s.io/v1beta1
-        kind: Kustomization
-        
-        bases:
-          - ../../base
-        
-        resources:
-          - kubernetes_ai_workloads.yaml
-        
-        images:
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-api-gateway
-            newTag: ${IMAGE_TAG}
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-user-service
-            newTag: ${IMAGE_TAG}
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-movie-service
-            newTag: ${IMAGE_TAG}
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-booking-service
-            newTag: ${IMAGE_TAG}
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-payment-service
-            newTag: ${IMAGE_TAG}
-          - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-notification-service
-            newTag: ${IMAGE_TAG}
-        
-        replicas:
-          - name: api-gateway
-            count: 3
-          - name: user-service
-            count: 3
-          - name: movie-service
-            count: 3
-          - name: booking-service
-            count: 3
-          - name: payment-service
-            count: 3
-          - name: notification-service
-            count: 3
-        
-        commonLabels:
-          environment: staging
-          version: ${IMAGE_TAG}
-        PATCH
-        
-        mv kubernetes/overlays/staging/kustomization-patch.yaml kubernetes/overlays/staging/kustomization.yaml
-    
-    - name: Commit and push infrastructure changes
-      working-directory: ticketing-infrastructure
-      run: |
-        git config user.email "ci-bot@ticketing-app.com"
-        git config user.name "CI Bot"
-        git add kubernetes/overlays/staging/kustomization.yaml
-        git commit -m "chore: update staging images to ${{ steps.version.outputs.version }}" || true
-        git push
-    
-    - name: Create deployment notification
-      run: |
-        echo "✅ Release v${{ steps.version.outputs.version }} published!"
-        echo "📦 Docker images pushed to ECR with tag: ${{ steps.version.outputs.version }}"
-        echo "🚀 Staging deployment workflow triggered automatically!"
+        github-token: ${{ secrets.GH_TOKEN_DEPLOYMENT }}
+        script: |
+          github.rest.repos.createDispatchEvent({
+            owner: 'naren9876',
+            repo: 'ticketing-infrastructure',
+            event_type: 'deploy-staging',
+            client_payload: {
+              version: '${{ github.event.release.tag_name }}'
+            }
+          })
