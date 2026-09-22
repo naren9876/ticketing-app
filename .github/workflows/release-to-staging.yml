@@ -10,6 +10,8 @@ jobs:
     
     steps:
     - uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GH_TOKEN_DEPLOYMENT }}
     
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
@@ -39,6 +41,43 @@ jobs:
         docker push $REGISTRY/ticketing-booking-service:$VERSION
         docker push $REGISTRY/ticketing-payment-service:$VERSION
         docker push $REGISTRY/ticketing-notification-service:$VERSION
+    
+    - name: Update Kustomization with new image tags
+      run: |
+        VERSION=${{ github.event.release.tag_name }}
+        KUSTOMIZE_FILE="kubernetes/overlays/staging/kustomization.yaml"
+        
+        # Remove old image overrides if they exist
+        sed -i '' '/# Override image tags/,$ d' $KUSTOMIZE_FILE
+        
+        # Add new image overrides
+        cat >> $KUSTOMIZE_FILE << 'KUSTOMIZE'
+        
+# Override image tags for staging deployment
+images:
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-api-gateway
+    newTag: VERSION_TAG
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-user-service
+    newTag: VERSION_TAG
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-movie-service
+    newTag: VERSION_TAG
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-booking-service
+    newTag: VERSION_TAG
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-payment-service
+    newTag: VERSION_TAG
+  - name: 840080485121.dkr.ecr.us-east-1.amazonaws.com/ticketing-notification-service
+    newTag: VERSION_TAG
+KUSTOMIZE
+        
+        sed -i '' "s/VERSION_TAG/$VERSION/g" $KUSTOMIZE_FILE
+    
+    - name: Commit and push updated manifests
+      run: |
+        git config user.email "github-actions@github.com"
+        git config user.name "GitHub Actions"
+        git add kubernetes/overlays/staging/kustomization.yaml
+        git commit -m "Update image tags to ${{ github.event.release.tag_name }}" || true
+        git push
     
     - name: Trigger infrastructure deployment
       uses: actions/github-script@v6
