@@ -43,7 +43,7 @@ jobs:
     - name: Trigger infrastructure deployment
       uses: actions/github-script@v6
       with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
+        github-token: ${{ secrets.GH_TOKEN_DEPLOYMENT }}
         script: |
           await github.rest.repos.createDispatchEvent({
             owner: 'naren9876',
